@@ -48,7 +48,7 @@ Select a game:
 3. Both
 4. Exit
 
-Enter your choice (1-4): 1
+Enter your choice (1-4): 3
 
 --- POWERBALL ---
 Numbers: 5 - 12 - 23 - 45 - 67 | Powerball: 18
