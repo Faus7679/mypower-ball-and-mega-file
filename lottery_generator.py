@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Lottery Number Generator
-Generates random numbers for Powerball and Mega Millions games
+Generates random numbers for Powerball, Mega Millions, and Multi Match games
 """
 
 import random
+from multi_match import MultiMatchGenerator
 
 
 class LotteryGenerator:
@@ -54,6 +55,7 @@ class LotteryGenerator:
 def main():
     """Main function to run the lottery number generator."""
     generator = LotteryGenerator()
+    multi_match_generator = MultiMatchGenerator()
     
     print("=" * 60)
     print("Lottery Number Generator".center(60))
@@ -65,10 +67,11 @@ def main():
         print("1. Powerball")
         print("2. Mega Millions")
         print("3. Both")
-        print("4. Exit")
+        print("4. Multi Match")
+        print("5. Exit")
         print()
         
-        choice = input("Enter your choice (1-4): ").strip()
+        choice = input("Enter your choice (1-5): ").strip()
         
         if choice == '1':
             print("\n--- POWERBALL ---")
@@ -92,14 +95,19 @@ def main():
             mm_result = generator.generate_mega_millions()
             print(generator.format_mega_millions(mm_result))
             print()
-            
+
         elif choice == '4':
+            print("\n--- MULTI MATCH ---")
+            ticket = multi_match_generator.generate_ticket()
+            print(multi_match_generator.format_ticket(ticket))
+            print()
+
+        elif choice == '5':
             print("\nThank you for using Lottery Number Generator!")
             print("Good luck!")
             break
-            
         else:
-            print("\nInvalid choice. Please enter 1, 2, 3, or 4.")
+            print("\nInvalid choice. Please enter 1, 2, 3, 4, or 5.")
 
 
 if __name__ == "__main__":
