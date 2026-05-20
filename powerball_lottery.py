@@ -6,8 +6,8 @@ Uses the public NY Open Data API (no key required) for recent results.
 
 from collections import Counter
 
-import pandas as pd
-import requests
+import pandas as pd # type: ignore
+import requests # type: ignore
 
 EXCEL_FILE = "powerball_game.xlsx"
 
