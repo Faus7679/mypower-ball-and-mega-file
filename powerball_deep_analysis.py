@@ -474,6 +474,130 @@ def show_ticket(label: str, main: list[int], pb: int, note: str = ""):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DRAW AUDIT – analyse a specific set of numbers against history
+# ─────────────────────────────────────────────────────────────────────────────
+
+def analyze_specific_ticket(
+    pick_nums: list,
+    pick_pb:   int,
+    full_c:    Counter,
+    recent_c:  Counter,
+    gap:       dict,
+    pair_c:    Counter,
+    pb_c:      Counter,
+    scores:    list,
+    df:        "pd.DataFrame",
+):
+    sorted_nums = sorted(pick_nums)
+    sec(f"DRAW AUDIT:  {' – '.join(f'{n:02d}' for n in sorted_nums)}  PB {pick_pb:02d}")
+
+    total      = len(df)
+    score_dict = dict(scores)
+    score_rank = {n: r + 1 for r, (n, _) in enumerate(scores)}
+    full_rank  = {n: r + 1 for r, (n, _) in enumerate(full_c.most_common())}
+    rec_rank   = {n: r + 1 for r, (n, _) in enumerate(recent_c.most_common())}
+
+    # ── Per-number breakdown ──────────────────────────────────────────────────
+    print(f"\n  ── PER-NUMBER BREAKDOWN ──────────────────────────────────────────────")
+    print(f"  {'Num':>4}  {'All-time cnt':>13}  {'Recent-52':>9}  {'Draws ago':>10}  {'Hot score':>10}  {'Rank/69':>7}")
+    print(f"  {'─'*4}  {'─'*13}  {'─'*9}  {'─'*10}  {'─'*10}  {'─'*7}")
+    for n in sorted_nums:
+        f_cnt = full_c.get(n, 0)
+        r_cnt = recent_c.get(n, 0)
+        g     = gap.get(n, total)
+        sc    = score_dict.get(n, 0.0)
+        srk   = score_rank.get(n, 69)
+        pct   = f_cnt / total * 100 if total else 0
+        tag   = (" [HOT]"     if srk <= 15 else
+                 " [WARM]"    if srk <= 30 else
+                 " [OVERDUE]" if g >= 25   else
+                 " [COLD]"    if srk >= 55 else "")
+        print(f"  {n:>4}  {f_cnt:>5} ({pct:4.1f}%)  {r_cnt:>9}  {g:>10}  {sc:>10.5f}  #{srk:>2}{tag}")
+
+    # ── Profile ───────────────────────────────────────────────────────────────
+    odds   = sum(1 for n in pick_nums if n % 2 != 0)
+    evens  = 5 - odds
+    lows   = sum(1 for n in pick_nums if n <= 35)
+    highs  = 5 - lows
+    s      = sum(pick_nums)
+    decades_map = [
+        ("01-09", range(1,  10)), ("10-19", range(10, 20)),
+        ("20-29", range(20, 30)), ("30-39", range(30, 40)),
+        ("40-49", range(40, 50)), ("50-59", range(50, 60)),
+        ("60-69", range(60, 70)),
+    ]
+    used_dec = []
+    for n in sorted_nums:
+        for label, rng in decades_map:
+            if n in rng:
+                used_dec.append(f"{n}→{label}")
+                break
+    consec = [(sorted_nums[i], sorted_nums[i+1])
+              for i in range(len(sorted_nums)-1)
+              if sorted_nums[i+1] - sorted_nums[i] == 1]
+
+    print(f"\n  ── TICKET PROFILE ────────────────────────────────────────────────────")
+    print(f"  Odd / Even   : {odds}O – {evens}E")
+    print(f"  Low / High   : {lows}L (≤35) – {highs}H (36-69)")
+    print(f"  Sum          : {s}  (historical peak ≈ 125–175)")
+    print(f"  Consecutive  : {len(consec)} pair(s)  {'none' if not consec else consec}")
+    print(f"  Decades      : {' | '.join(used_dec)}")
+
+    # ── Pair strength ─────────────────────────────────────────────────────────
+    all_pairs      = list(pair_c.most_common())
+    pair_rank_map  = {p: r + 1 for r, (p, _) in enumerate(all_pairs)}
+    print(f"\n  ── PAIR STRENGTH (within this ticket) ─────────────────────────────")
+    print(f"  {'Pair':>12}  {'Historical count':>17}  {'Rank':>6}  Strength")
+    print(f"  {'─'*12}  {'─'*17}  {'─'*6}  {'─'*10}")
+    for a, b in combinations(sorted_nums, 2):
+        pair  = (a, b)
+        cnt   = pair_c.get(pair, 0)
+        rk    = pair_rank_map.get(pair, len(all_pairs))
+        total_pairs = len(all_pairs)
+        pct_rk = rk / total_pairs * 100 if total_pairs else 100
+        strength = ("★ TOP TIER" if pct_rk <= 5  else
+                    "STRONG"    if pct_rk <= 15 else
+                    "medium"    if pct_rk <= 40 else "weak")
+        print(f"  {str(pair):>12}  {cnt:>17}  #{rk:>5}  {strength}")
+
+    # ── Powerball ball ────────────────────────────────────────────────────────
+    pb_total  = sum(pb_c.values())
+    pb_cnt    = pb_c.get(pick_pb, 0)
+    pb_ranks  = {b: r + 1 for r, (b, _) in enumerate(pb_c.most_common())}
+    pb_rank   = pb_ranks.get(pick_pb, 26)
+    pb_pct    = pb_cnt / pb_total * 100 if pb_total else 0
+    exp_pb    = pb_total / 26 if pb_total else 0
+    delta_pb  = (pb_cnt - exp_pb) / exp_pb * 100 if exp_pb else 0
+    sign_pb   = "+" if delta_pb >= 0 else ""
+    pb_label  = ("ABOVE avg" if delta_pb > 5 else
+                 "BELOW avg" if delta_pb < -5 else "NEAR avg")
+
+    print(f"\n  ── POWERBALL BALL {pick_pb:02d} ─────────────────────────────────────────────")
+    print(f"  Appeared     : {pb_cnt}×  ({pb_pct:.1f}% of draws)")
+    print(f"  Expected     : {exp_pb:.1f}×")
+    print(f"  vs Average   : {sign_pb}{delta_pb:.1f}%  [{pb_label}]")
+    print(f"  Frequency Rank: #{pb_rank} out of 26 Powerballs")
+
+    # ── Overall assessment ────────────────────────────────────────────────────
+    hot_count    = sum(1 for n in pick_nums if score_rank.get(n, 69) <= 20)
+    overdue_cnt  = sum(1 for n in pick_nums if gap.get(n, 0) >= 20)
+    avg_sc       = sum(score_dict.get(n, 0) for n in pick_nums) / len(pick_nums)
+    # normalise roughly: top composite is ~0.60, random ~0.40
+    rel = min(max((avg_sc - 0.30) / 0.30, 0), 1)
+    filled = int(round(rel * 30))
+    meter = "█" * filled + "░" * (30 - filled)
+    level = "HIGH" if rel >= 0.65 else ("MEDIUM" if rel >= 0.35 else "LOW")
+
+    print(f"\n  ── OVERALL STATISTICAL ASSESSMENT ─────────────────────────────────")
+    print(f"  Hot numbers  (top-20 score) : {hot_count}/5")
+    print(f"  Overdue numbers (≥20 draws) : {overdue_cnt}/5")
+    print(f"  Avg composite score         : {avg_sc:.5f}")
+    print(f"  Statistical alignment       : {level}  [{meter}]")
+    print(f"\n  ⚑  Each Powerball draw is fully independent – statistics do NOT")
+    print(f"     predict the next result.  Play responsibly.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FINAL RECOMMENDATIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -609,6 +733,19 @@ def main():
     final_picks(
         scores, pb_c, pair_c, rec_c, gap,
         best_oe, best_lh, optimal_sum, consec_tgt, pos_best
+    )
+
+    # ── Specific draw audit ──────────────────────────────────────────────────
+    analyze_specific_ticket(
+        pick_nums=[10, 14, 41, 53, 59],
+        pick_pb=3,
+        full_c=full_c,
+        recent_c=rec_c,
+        gap=gap,
+        pair_c=pair_c,
+        pb_c=pb_c,
+        scores=scores,
+        df=df,
     )
 
 
