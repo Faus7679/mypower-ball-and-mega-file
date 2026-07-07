@@ -162,6 +162,8 @@ def overdue_numbers(df: pd.DataFrame):
     for idx, row in df.iterrows():
         for col in MAIN_COLS:
             n = int(row[col])
+            if n > 70:
+                continue  # pre-2017 matrix used 1-75; not valid under the current 1-70 range
             last_seen[n] = idx   # last draw index where n appeared
 
     total = len(df) - 1
