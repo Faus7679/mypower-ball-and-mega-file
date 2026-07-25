@@ -444,20 +444,6 @@ def composite_score(
 # TICKET BUILDER UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fits_profile(nums: list[int], target_oe: tuple, target_lh: tuple,
-                 optimal_sum: float, consec_target: int) -> bool:
-    odds  = sum(1 for n in nums if n % 2 != 0)
-    evens = 5 - odds
-    low   = sum(1 for n in nums if n <= 35)
-    high  = 5 - low
-    s     = sum(nums)
-    # allow ±15 around optimal sum, ±1 on odd/even, ±1 on low/high
-    oe_ok = abs(odds  - target_oe[0]) <= 1
-    lh_ok = abs(low   - target_lh[0]) <= 1
-    sum_ok = abs(s - optimal_sum) <= 30
-    return oe_ok and lh_ok and sum_ok
-
-
 def show_ticket(label: str, main: list[int], pb: int, note: str = ""):
     w = 56
     print(f"\n  ┌─ {label} {'─'*(w-len(label)-3)}┐")
@@ -601,86 +587,77 @@ def analyze_specific_ticket(
 # FINAL RECOMMENDATIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def final_picks(
+def build_diverse_profile_tickets(
     scores:      list[tuple[int, float]],
-    pb_c:        Counter,
-    pair_c:      Counter,
-    rec_c:       Counter,
-    gap:         dict,
     best_oe:     tuple,
     best_lh:     tuple,
     optimal_sum: float,
-    consec_tgt:  int,
-    pos_best:    list[list[int]],
-):
-    sec("★  FINAL RECOMMENDED TICKETS  ★")
+    pool_size:   int = 45,
+    n_tickets:   int = 5,
+    max_reuse:   int = 2,
+) -> list[list[int]]:
+    """Build N tickets that each match the single strongest historical
+    profile (dominant odd/even split, dominant low/high split, sum near
+    the peak bucket, zero consecutive pairs — the most common shape a
+    real draw takes), picked from the hottest composite-score numbers,
+    while capping how many times any one number can reuse across the N
+    tickets so the set is genuinely diversified rather than near-clones
+    of the single best combination.
+    """
+    score_dict = dict(scores)
+    pool       = [n for n, _ in scores[:pool_size]]
+    used       = Counter()
+    tickets: list[list[int]] = []
 
-    hot_nums  = [n for n, _ in scores[:15]]
-    top_pb    = [b for b, _ in pb_c.most_common(5)]
-
-    # ── Ticket 1: Pure Composite Hot ──────────────────────────────────────
-    t1 = sorted([n for n, _ in scores[:5]])
-    show_ticket("Ticket 1 – PURE COMPOSITE HOT", t1, top_pb[0],
-                "Top-5 by multi-factor composite score")
-
-    # ── Ticket 2: Hot + Most Overdue ──────────────────────────────────────
-    top10  = [n for n, _ in scores[:10]]
-    t2_raw = sorted(top10, key=lambda n: -gap.get(n, 0))[:5]
-    t2     = sorted(t2_raw)
-    show_ticket("Ticket 2 – HOT + OVERDUE", t2, top_pb[1],
-                "Top-10 score, sorted by longest absence")
-
-    # ── Ticket 3: Pair-Anchored ────────────────────────────────────────────
-    best_pair = pair_c.most_common(1)[0][0]
-    t3_pool   = list(best_pair)
-    for n, _ in scores:
-        if n not in t3_pool:
-            t3_pool.append(n)
-        if len(t3_pool) >= 5:
+    for _ in range(n_tickets):
+        best_combo, best_sc = None, -1.0
+        for combo in combinations(pool, 5):
+            if any(used[n] >= max_reuse for n in combo):
+                continue
+            odds  = sum(1 for n in combo if n % 2 != 0)
+            low   = sum(1 for n in combo if n <= 35)
+            s     = sum(combo)
+            nums  = sorted(combo)
+            consec = sum(1 for a, b in zip(nums, nums[1:]) if b - a == 1)
+            if odds != best_oe[0] or low != best_lh[0]:
+                continue
+            if abs(s - optimal_sum) > 25:
+                continue
+            if consec > 0:
+                continue
+            sc = sum(score_dict[n] for n in combo) - sum(used[n] for n in combo) * 0.20
+            if sc > best_sc:
+                best_sc, best_combo = sc, combo
+        if best_combo is None:
             break
-    t3 = sorted(t3_pool[:5])
-    show_ticket("Ticket 3 – PAIR ANCHOR", t3, top_pb[2],
-                f"Anchored on hottest pair {best_pair}")
+        tickets.append(sorted(best_combo))
+        for n in best_combo:
+            used[n] += 1
+    return tickets
 
-    # ── Ticket 4: Profile-Matched (sum + odd/even + high/low) ─────────────
-    candidates = [n for n, _ in scores[:25]]
-    t4_best    = None
-    t4_best_score = -1
-    for combo in combinations(candidates, 5):
-        if fits_profile(list(combo), best_oe, best_lh, optimal_sum, consec_tgt):
-            sc = sum(dict(scores).get(n, 0) for n in combo)
-            if sc > t4_best_score:
-                t4_best_score = sc
-                t4_best = combo
-    if t4_best is None:
-        t4_best = tuple([n for n, _ in scores[:5]])
-    t4 = sorted(t4_best)
-    show_ticket("Ticket 4 – PROFILE MATCHED", t4, top_pb[3],
-                f"Best combo matching {best_oe[0]}O-{best_oe[1]}E, "
-                f"{best_lh[0]}L-{best_lh[1]}H, sum≈{optimal_sum:.0f}")
 
-    # ── Ticket 5: Positional Best ─────────────────────────────────────────
-    t5 = []
-    for i, pos_list in enumerate(pos_best):
-        for n in pos_list:
-            if n not in t5:
-                t5.append(n)
-                break
-    t5 = sorted(t5[:5])
-    show_ticket("Ticket 5 – POSITIONAL LEADERS", t5, top_pb[4],
-                "Hottest number at each of the 5 sorted positions")
+def final_picks(
+    scores:      list[tuple[int, float]],
+    pb_c:        Counter,
+    best_oe:     tuple,
+    best_lh:     tuple,
+    optimal_sum: float,
+):
+    sec("★  FIVE STRONG TICKETS  (diversified profile-match pattern)  ★")
 
-    # ── Ticket 6: Recent Surge ────────────────────────────────────────────
-    t6 = sorted([n for n, _ in rec_c.most_common(5)])
-    show_ticket("Ticket 6 – RECENT SURGE (last 2 yrs)", t6, top_pb[0],
-                "5 most frequent numbers in last ~2 years")
+    print(f"  Pattern used: composite hot-score pool, constrained to the single most\n"
+          f"  common draw shape — {best_oe[0]}O-{best_oe[1]}E, {best_lh[0]}L-{best_lh[1]}H, "
+          f"sum≈{optimal_sum:.0f}, 0 consecutive pairs —\n"
+          f"  with number reuse capped so the 5 tickets stay genuinely distinct.\n")
 
-    # ── Ticket 7: Wildcard / Overdue ──────────────────────────────────────
-    wildcard  = max(gap, key=gap.get)
-    t7_pool   = [n for n, _ in scores[:4]] + [wildcard]
-    t7 = sorted(set(t7_pool))[:5]
-    show_ticket("Ticket 7 – WILDCARD OVERDUE", t7, top_pb[1],
-                f"Top-4 hot + #{wildcard} (most overdue ever: {gap[wildcard]} draws)")
+    top_pb  = [b for b, _ in pb_c.most_common(5)]
+    tickets = build_diverse_profile_tickets(scores, best_oe, best_lh, optimal_sum)
+    score_dict = dict(scores)
+
+    for i, t in enumerate(tickets):
+        avg_sc = sum(score_dict[n] for n in t) / len(t)
+        show_ticket(f"Ticket {i+1} – STRONG PATTERN MATCH", t, top_pb[i % len(top_pb)],
+                    f"Profile-matched, diversity-capped pick | avg composite score={avg_sc:.4f}")
 
     # ── Powerball Shortlist ───────────────────────────────────────────────
     print(f"\n  ─── TOP POWERBALL BALLS (by frequency) ───")
@@ -704,7 +681,7 @@ def final_picks(
 def main():
     print("╔══════════════════════════════════════════════════════════════╗")
     print("║         POWERBALL  ADVANCED PATTERN ANALYSIS                ║")
-    print("║         11 Statistical Patterns → 7 Ticket Proposals        ║")
+    print("║         11 Statistical Patterns → 5 Strong Ticket Picks     ║")
     print("╚══════════════════════════════════════════════════════════════╝")
 
     try:
@@ -722,22 +699,19 @@ def main():
     best_oe       = odd_even_analysis(df)
     best_lh       = high_low_analysis(df)
     optimal_sum   = sum_range_analysis(df)
-    consec_tgt, _ = consecutive_analysis(df)
+    consecutive_analysis(df)
     delta_avg, _  = delta_analysis(df)
     decade_analysis(df)
-    pos_best      = positional_frequency(df)
+    positional_frequency(df)
     pair_c        = pair_analysis(df)
     pb_c          = pb_frequency(df)
     scores        = composite_score(full_c, rec_c, gap, pair_c, df)
 
-    final_picks(
-        scores, pb_c, pair_c, rec_c, gap,
-        best_oe, best_lh, optimal_sum, consec_tgt, pos_best
-    )
+    final_picks(scores, pb_c, best_oe, best_lh, optimal_sum)
 
     # ── Specific draw audit ──────────────────────────────────────────────────
     analyze_specific_ticket(
-        pick_nums=[10, 14, 41, 53, 59],
+        pick_nums=[9, 14, 44, 50, 56],
         pick_pb=3,
         full_c=full_c,
         recent_c=rec_c,
