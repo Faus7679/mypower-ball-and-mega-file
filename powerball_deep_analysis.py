@@ -428,7 +428,9 @@ def composite_score(
         r_r = rec_rank.get(n, total_ranks) / total_ranks
         p_s = pair_s.get(n, 0) / max_pair
         g_s = gap.get(n, max_gap) / max_gap
-        score = 0.35 * (1 - r_r) + 0.25 * (1 - f_r) + 0.25 * p_s + 0.15 * g_s
+        # Overdue-weighted: gap since last hit now dominates (was 15%, hot-recency
+        # was 35%). Numbers that are "due" outrank numbers that are merely hot.
+        score = 0.40 * g_s + 0.25 * (1 - f_r) + 0.20 * p_s + 0.15 * (1 - r_r)
         scores.append((n, round(score, 5)))
 
     scores.sort(key=lambda x: -x[1])
@@ -643,10 +645,11 @@ def final_picks(
     best_lh:     tuple,
     optimal_sum: float,
 ):
-    sec("★  FIVE STRONG TICKETS  (diversified profile-match pattern)  ★")
+    sec("★  FIVE STRONG TICKETS  (overdue-weighted profile-match pattern)  ★")
 
-    print(f"  Pattern used: composite hot-score pool, constrained to the single most\n"
-          f"  common draw shape — {best_oe[0]}O-{best_oe[1]}E, {best_lh[0]}L-{best_lh[1]}H, "
+    print(f"  Pattern used: composite score now led by overdue gap (40%) rather than\n"
+          f"  recent hotness (15%), pool constrained to the single most common draw\n"
+          f"  shape — {best_oe[0]}O-{best_oe[1]}E, {best_lh[0]}L-{best_lh[1]}H, "
           f"sum≈{optimal_sum:.0f}, 0 consecutive pairs —\n"
           f"  with number reuse capped so the 5 tickets stay genuinely distinct.\n")
 
@@ -711,8 +714,8 @@ def main():
 
     # ── Specific draw audit ──────────────────────────────────────────────────
     analyze_specific_ticket(
-        pick_nums=[9, 14, 44, 50, 56],
-        pick_pb=3,
+        pick_nums=[3, 4, 24, 36, 47],
+        pick_pb=17,
         full_c=full_c,
         recent_c=rec_c,
         gap=gap,
