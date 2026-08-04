@@ -714,8 +714,8 @@ def main():
 
     # ── Specific draw audit ──────────────────────────────────────────────────
     analyze_specific_ticket(
-        pick_nums=[30, 36, 40, 42, 57],
-        pick_pb=2,
+        pick_nums=[8, 30, 41, 48, 54],
+        pick_pb=4,
         full_c=full_c,
         recent_c=rec_c,
         gap=gap,
