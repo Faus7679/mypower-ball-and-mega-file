@@ -245,6 +245,11 @@ def build_tickets(scores: dict, gap: dict, pair_c: Counter, rec_c: Counter,
     pb_ranked = [b for b, _ in pb_c.most_common()]
     hot15     = [n for n, _ in ranked[:15]]
 
+    def pick_pb(top_n: int = 8) -> int:
+        pool = pb_ranked[:top_n] or list(range(1, 27))
+        wts  = [pb_c.get(b, 1) for b in pool]
+        return weighted_sample(pool, wts, 1)[0]
+
     proxy_note = "  [Using Powerball patterns as proxy — same number pool]" if proxy else ""
     if proxy_note:
         print(proxy_note)
@@ -254,69 +259,86 @@ def build_tickets(scores: dict, gap: dict, pair_c: Counter, rec_c: Counter,
           f"{best_lh[0]}L-{best_lh[1]}H  |  sum ≈ {opt_sum:.0f}")
     print(f"  Hottest PB balls : {', '.join(str(b) for b, _ in pb_c.most_common(7))}")
 
-    # Ticket 1: Pure Composite Hot
-    t1 = sorted(top5)
-    show(f"{game} Ticket 1 – COMPOSITE HOT", t1, pb_ranked[0],
-         "Top-5 multi-factor composite score")
+    # Ticket 1: Pure Composite Hot — weighted random 5 from top-12 scores
+    pool1 = [n for n, _ in ranked[:12]]
+    w1    = [scores[n] for n in pool1]
+    t1    = sorted(weighted_sample(pool1, w1, 5))
+    show(f"{game} Ticket 1 – COMPOSITE HOT", t1, pick_pb(),
+         "Weighted random pick from top-12 composite scores")
 
-    # Ticket 2: Hot + Overdue
-    top10 = [n for n, _ in ranked[:10]]
-    t2    = sorted(sorted(top10, key=lambda n: -gap.get(n, 0))[:5])
-    show(f"{game} Ticket 2 – HOT + OVERDUE", t2, pb_ranked[1],
-         "Top-10 composite re-sorted by longest absence")
+    # Ticket 2: Hot + Overdue — weighted by absence gap within top-15 hot pool
+    pool2 = [n for n, _ in ranked[:15]]
+    w2    = [gap.get(n, 0) + 1 for n in pool2]
+    t2    = sorted(weighted_sample(pool2, w2, 5))
+    show(f"{game} Ticket 2 – HOT + OVERDUE", t2, pick_pb(),
+         "Top-15 composite pool, weighted random by longest absence")
 
-    # Ticket 3: Profile-Matched
+    # Ticket 3: Profile-Matched — weighted random among best-scoring matches
     cands   = [n for n, _ in ranked[:25]]
-    t3_best = None
-    t3_sc   = -1.0
+    matches = []
     for combo in combinations(cands, 5):
         if fits(list(combo), best_oe, best_lh, opt_sum):
             sc = sum(scores.get(n, 0) for n in combo)
-            if sc > t3_sc:
-                t3_sc, t3_best = sc, combo
-    if t3_best is None:
+            matches.append((combo, sc))
+    if matches:
+        matches.sort(key=lambda m: -m[1])
+        top_matches = matches[:8]
+        combos      = [m[0] for m in top_matches]
+        wts         = [m[1] for m in top_matches]
+        t3_best     = weighted_sample(combos, wts, 1)[0]
+    else:
         t3_best = tuple(top5)
-    show(f"{game} Ticket 3 – PROFILE MATCHED", sorted(t3_best), pb_ranked[2],
+    show(f"{game} Ticket 3 – PROFILE MATCHED", sorted(t3_best), pick_pb(),
          f"{best_oe[0]}O-{best_oe[1]}E | {best_lh[0]}L-{best_lh[1]}H | sum≈{opt_sum:.0f}")
 
-    # Ticket 4: Recent Surge
-    t4 = sorted([n for n, _ in rec_c.most_common(5)])
-    show(f"{game} Ticket 4 – RECENT SURGE", t4, pb_ranked[0],
-         "5 most frequent numbers in the last ~2 years")
+    # Ticket 4: Recent Surge — weighted random 5 from top-12 recent frequency
+    pool4 = [n for n, _ in rec_c.most_common(12)]
+    w4    = [rec_c[n] for n in pool4]
+    t4    = sorted(weighted_sample(pool4, w4, 5)) if len(pool4) >= 5 else sorted(pool4)
+    show(f"{game} Ticket 4 – RECENT SURGE", t4, pick_pb(),
+         "Weighted random pick among the most frequent numbers in the last ~2 years")
 
-    # Ticket 5: Pair Anchor
-    best_pair = pair_c.most_common(1)[0][0]
-    t5_pool   = list(best_pair)
-    for n, _ in ranked:
-        if n not in t5_pool:
-            t5_pool.append(n)
-        if len(t5_pool) >= 5:
-            break
-    show(f"{game} Ticket 5 – PAIR ANCHOR", sorted(t5_pool[:5]), pb_ranked[2],
-         f"Anchored on hottest pair {best_pair}")
+    # Ticket 5: Pair Anchor — weighted random anchor from top-5 hottest pairs
+    top_pairs = pair_c.most_common(5)
+    pair_pool = [p for p, _ in top_pairs]
+    pair_wts  = [c for _, c in top_pairs]
+    anchor    = weighted_sample(pair_pool, pair_wts, 1)[0]
+    t5_pool   = list(anchor)
+    fill_pool = [n for n, _ in ranked[:15] if n not in t5_pool]
+    fill_wts  = [scores[n] for n in fill_pool]
+    t5_pool  += weighted_sample(fill_pool, fill_wts, 5 - len(t5_pool))
+    show(f"{game} Ticket 5 – PAIR ANCHOR", sorted(t5_pool[:5]), pick_pb(),
+         f"Anchored on weighted-random hot pair {anchor}")
 
-    # Ticket 6: Decade Balanced
+    # Ticket 6: Decade Balanced — weighted random pick within each active decade
     decade_map = [("1-9", 1, 9), ("10-29", 10, 29), ("30-49", 30, 49), ("50-69", 50, 69)]
     t6_pool: list = []
     for _, lo, hi in decade_map:
-        for n, _ in ranked:
-            if lo <= n <= hi and n not in t6_pool:
-                t6_pool.append(n)
-                break
-    for n, _ in ranked:
-        if n not in t6_pool:
-            t6_pool.append(n)
-        if len(t6_pool) >= 5:
-            break
-    show(f"{game} Ticket 6 – DECADE BALANCED", sorted(t6_pool[:5]), pb_ranked[3],
-         "Best hot pick from each active decade range")
+        d_pool = [n for n, _ in ranked if lo <= n <= hi][:4]
+        if d_pool:
+            d_wts = [scores[n] for n in d_pool]
+            t6_pool.append(weighted_sample(d_pool, d_wts, 1)[0])
+    if len(t6_pool) < 5:
+        fill_pool = [n for n, _ in ranked[:15] if n not in t6_pool]
+        fill_wts  = [scores[n] for n in fill_pool]
+        t6_pool  += weighted_sample(fill_pool, fill_wts, 5 - len(t6_pool))
+    show(f"{game} Ticket 6 – DECADE BALANCED", sorted(t6_pool[:5]), pick_pb(),
+         "Weighted random hot pick from each active decade range")
 
-    # Ticket 7: Wildcard / Most Overdue
-    wildcard = max(gap, key=gap.get)
-    t7_pool  = [n for n, _ in ranked[:4]] + [wildcard]
-    t7       = sorted(set(t7_pool))[:5]
-    show(f"{game} Ticket 7 – WILDCARD OVERDUE", t7, pb_ranked[1],
-         f"Top-4 hot + #{wildcard} (most overdue: {gap[wildcard]} draws ago)")
+    # Ticket 7: Wildcard / Most Overdue — weighted random overdue wildcard
+    hot_pool = [n for n, _ in ranked[:8]]
+    hot_wts  = [scores[n] for n in hot_pool]
+    hot4     = weighted_sample(hot_pool, hot_wts, 4)
+    overdue_pool = [n for n in sorted(gap, key=gap.get, reverse=True)[:8] if n not in hot4] \
+                   or sorted(gap, key=gap.get, reverse=True)[:8]
+    overdue_wts  = [gap[n] for n in overdue_pool]
+    wildcard     = weighted_sample(overdue_pool, overdue_wts, 1)[0]
+    t7 = sorted(set(hot4 + [wildcard]))
+    while len(t7) < 5:
+        extra = next(n for n, _ in ranked if n not in t7)
+        t7 = sorted(t7 + [extra])
+    show(f"{game} Ticket 7 – WILDCARD OVERDUE", t7, pick_pb(),
+         f"Weighted hot top-8 + overdue wildcard #{wildcard} ({gap[wildcard]} draws ago)")
 
     # Smart Weighted Random Picks
     print(f"\n  ─── {game} SMART WEIGHTED RANDOM PICKS ───")
