@@ -11,7 +11,8 @@ A simple Python application to randomly generate lottery numbers for **Powerball
 
 ## Requirements
 
-- Python 3.x (no external dependencies required)
+- Python 3.x (no external dependencies required for `lottery_generator.py`)
+- `pandas`, `scikit-learn`, `openpyxl` for `powerball_ml_predictor.py` (see below)
 
 ## Usage
 
@@ -55,6 +56,23 @@ Powerball:    16
 ### Mega Millions
 - Choose 5 numbers from 1 to 70
 - Choose 1 Mega Ball number from 1 to 25
+
+## ML-weighted ticket generator
+
+`powerball_ml_predictor.py` trains a logistic-regression model per number on
+`powerball_game.xlsx`'s draw history (frequency, recency, gap, and seasonality
+features), evaluates it on held-out draws, and uses the predicted
+probabilities to weight ticket generation.
+
+```bash
+python3 powerball_ml_predictor.py -n 3 --seed 42
+```
+
+The printed evaluation (AUC, log-loss, Brier score vs. a constant-probability
+baseline) will show the model performing no better than chance — this is
+expected and correct, since each Powerball draw is an independent, uniformly
+random mechanical event. No model can predict it above the game's stated
+odds. This script exists to be transparent about that, not to claim otherwise.
 
 ## License
 
