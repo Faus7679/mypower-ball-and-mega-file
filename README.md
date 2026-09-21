@@ -74,6 +74,23 @@ expected and correct, since each Powerball draw is an independent, uniformly
 random mechanical event. No model can predict it above the game's stated
 odds. This script exists to be transparent about that, not to claim otherwise.
 
+## ML position picks (drawn order)
+
+Menu option 7 in `lottery_generator.py` trains one logistic-regression model
+per ball position (1st–5th drawn) plus one for the red ball, then generates
+tickets in drawn order rather than sorted ascending. Numbers are picked
+position by position from each position's own predicted distribution, never
+repeating a number.
+
+- Data: `powerball_game.xlsx`, the only file that keeps drawn order. Only
+  draws from 2015-10-07 (current 69/26 rules) up to the last unsorted row
+  (2026-01-07) are used; later rows were stored ascending and are excluded.
+- Mega Millions is not supported: its data files only contain sorted numbers.
+- Needs `numpy`, `pandas`, `scikit-learn`, `openpyxl` (the rest of the menu
+  does not).
+- Held-out AUC and log-loss per position are printed with every run; they sit
+  at chance, as expected for a random draw.
+
 ## License
 
 See LICENSE file for details.
