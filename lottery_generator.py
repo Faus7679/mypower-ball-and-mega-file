@@ -2,8 +2,10 @@
 """
 Lottery Number Generator
 Random and Smart Pick modes for Powerball, Double Play, and Mega Millions.
-Smart Pick hot scores are derived from powerball_doubleplay_analysis.py
-using 1,959 historical draws (Feb 2010 – Jun 2026).
+Smart Pick hot scores are derived from powerball_doubleplay_analysis.py's
+composite formula, recomputed 2026-10-04 against the past 3 months of
+actual Powerball draws (2026-07-03 to 2026-10-03, 40 draws) layered on
+3,887 historical draws (Feb 2010 – Oct 2026).
 ML Position Pick trains a model per ball position on drawn-order Powerball
 history and generates tickets in drawn order (not sorted ascending).
 """
@@ -20,32 +22,38 @@ except ImportError:
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 
-# ── Hot score data from 1,959-draw analysis (June 2026) ──────────────────────
-# Composite score per main number (1-69): recent freq 40% · all-time 25%
-# · pair co-occurrence 20% · overdue bonus 15%.  Higher = hotter.
+# ── Hot score data, recomputed on 2026-10-04 from 3,887 draws (2010-02-03 to
+# 2026-10-03), fetched live from NY Open Data + local history.  Composite
+# score per main number (1-69): recent freq 40% · all-time 25% · pair
+# co-occurrence 20% · overdue bonus 15% -- same weights as
+# powerball_doubleplay_analysis.py, but "recent" is now the actual past
+# 3 calendar months of draws (2026-07-03 to 2026-10-03, 40 draws) rather
+# than a fixed last-104-draws window.  Higher = hotter.
 _PB_SCORES = {
-     1: 0.31608,  2: 0.46072,  3: 0.75207,  4: 0.54549,  5: 0.56394,
-     6: 0.67769,  7: 0.65852,  8: 0.54485,  9: 0.34761, 10: 0.52442,
-    11: 0.70204, 12: 0.48637, 13: 0.36259, 14: 0.52663, 15: 0.26295,
-    16: 0.60830, 17: 0.55168, 18: 0.76206, 19: 0.64245, 20: 0.50106,
-    21: 0.74020, 22: 0.40775, 23: 0.57273, 24: 0.60504, 25: 0.33469,
-    26: 0.39965, 27: 0.71056, 28: 0.87459, 29: 0.44158, 30: 0.61167,
-    31: 0.67517, 32: 0.69571, 33: 0.59208, 34: 0.32331, 35: 0.35893,
-    36: 0.81619, 37: 0.58248, 38: 0.42987, 39: 0.63618, 40: 0.56364,
-    41: 0.47196, 42: 0.52049, 43: 0.60002, 44: 0.49918, 45: 0.44109,
-    46: 0.26622, 47: 0.77404, 48: 0.43409, 49: 0.41661, 50: 0.33961,
-    51: 0.63828, 52: 0.82687, 53: 0.59150, 54: 0.51944, 55: 0.36655,
-    56: 0.66850, 57: 0.59798, 58: 0.63898, 59: 0.67274, 60: 0.47602,
-    61: 0.24989, 62: 0.30285, 63: 0.52066, 64: 0.56167, 65: 0.39849,
-    66: 0.35581, 67: 0.18459, 68: 0.25911, 69: 0.28681,
+     1: 0.42988,  2: 0.62350,  3: 0.67209,  4: 0.64942,  5: 0.64246,
+     6: 0.61942,  7: 0.49585,  8: 0.70329,  9: 0.66464, 10: 0.62667,
+    11: 0.50049, 12: 0.62394, 13: 0.34361, 14: 0.71317, 15: 0.53430,
+    16: 0.54683, 17: 0.73159, 18: 0.58191, 19: 0.54408, 20: 0.52348,
+    21: 0.64886, 22: 0.44413, 23: 0.55228, 24: 0.45825, 25: 0.52652,
+    26: 0.43347, 27: 0.58683, 28: 0.52638, 29: 0.63380, 30: 0.62601,
+    31: 0.43652, 32: 0.54169, 33: 0.52144, 34: 0.33434, 35: 0.32737,
+    36: 0.74691, 37: 0.61304, 38: 0.56041, 39: 0.48823, 40: 0.72074,
+    41: 0.47163, 42: 0.51601, 43: 0.38043, 44: 0.75202, 45: 0.60824,
+    46: 0.41487, 47: 0.52764, 48: 0.50375, 49: 0.41508, 50: 0.65203,
+    51: 0.38094, 52: 0.46474, 53: 0.49559, 54: 0.70109, 55: 0.59476,
+    56: 0.49940, 57: 0.54918, 58: 0.70104, 59: 0.75843, 60: 0.20968,
+    61: 0.38625, 62: 0.24406, 63: 0.42174, 64: 0.45462, 65: 0.46250,
+    66: 0.31261, 67: 0.43053, 68: 0.23168, 69: 0.36599,
 }
 
-# Red ball (1-26) frequency counts from 1,959 draws
+# Red ball (1-26) frequency counts from the same past-3-months window
+# (40 draws, 2026-07-03 to 2026-10-03); unseen balls get a small nonzero
+# floor so weighted sampling never excludes them outright.
 _PB_RED = {
-     1: 75,  2: 68,  3: 67,  4: 77,  5: 76,  6: 67,  7: 64,  8: 62,
-     9: 66, 10: 63, 11: 65, 12: 64, 13: 66, 14: 79, 15: 64, 16: 57,
-    17: 61, 18: 78, 19: 67, 20: 77, 21: 71, 22: 59, 23: 67,
-    24: 82, 25: 76, 26: 68,
+     1: 1,  2: 3,  3: 4,  4: 2,  5: 2,  6: 1,  7: 3,  8: 1,
+     9: 2, 10: 3, 11: 1, 12: 1, 13: 2, 14: 3, 15: 1, 16: 1,
+    17: 2, 18: 2, 19: 1, 20: 2, 21: 1, 22: 2, 23: 2, 24: 1,
+    25: 2, 26: 1,
 }
 
 # Pre-ranked reference lists
@@ -311,7 +319,7 @@ def display_smart_pick(game: str, main: list, pb: int, top_main: list, top_pb: i
     border = "★" * 52
     print(f"\n{border}")
     print(f"   ★  {game} SMART PICK  ★")
-    print(f"   Based on 1,959-draw analysis  ·  June 2026")
+    print(f"   Based on past-3-months draws (Jul-Oct 2026)  ·  updated Oct 2026")
     print(border)
     print(f"\n  Weighted Pick   :  {' – '.join(f'{n:2d}' for n in main)}"
           f"   |  Red: {pb}")
