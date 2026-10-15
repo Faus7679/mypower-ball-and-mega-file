@@ -8,6 +8,8 @@ actual Powerball draws (2026-07-03 to 2026-10-03, 40 draws) layered on
 3,887 historical draws (Feb 2010 – Oct 2026).
 ML Position Pick trains a model per ball position on drawn-order Powerball
 history and generates tickets in drawn order (not sorted ascending).
+Pattern Pick learns the low/high shape of recent draws (anchored on
+2026-10-07 and 2026-10-03) and keeps tickets with the same spread.
 """
 
 import sys
@@ -285,6 +287,96 @@ def generate_ml_position_picks(count: int):
     return ml, _ml_pick(ml, greedy=True), [_ml_pick(ml) for _ in range(count)]
 
 
+# ── Pattern Pick: low/high scope learned from recent draws ───────────────────
+# Each draw is reduced to its shape: how many balls are low (1-34) vs high
+# (35-69), the lowest ball, the highest ball, and the sum.  A weighted kernel
+# density model (scikit-learn KernelDensity) is fit on those shapes from the
+# past 3 months of official draws, with the two anchor draws carrying 90% of
+# the weight so their lopsided low/high spread dominates.  Candidate tickets are
+# drawn with the Smart Pick hot-score weights, then kept in proportion to how
+# well their shape fits the model.
+
+_LOW_MAX = 34
+
+# Official results, NY Open Data (data.ny.gov d6yy-54nr), 2026-07-15 to 2026-10-14.
+_RECENT_DRAWS = [
+    ("2026-07-15", ( 2,  7, 18, 29, 38), 16), ("2026-07-18", ( 9, 14, 44, 50, 56),  3),
+    ("2026-07-20", ( 2,  9, 44, 53, 59),  8), ("2026-07-22", ( 4,  5, 22, 50, 58),  1),
+    ("2026-07-25", ( 3,  4, 24, 36, 47), 17), ("2026-07-27", ( 6, 26, 46, 58, 65), 25),
+    ("2026-07-29", (30, 36, 40, 42, 57),  2), ("2026-08-01", ( 6, 17, 27, 48, 50),  5),
+    ("2026-08-03", ( 8, 30, 41, 48, 54),  4), ("2026-08-05", (14, 20, 59, 60, 61), 25),
+    ("2026-08-08", ( 5,  9, 35, 54, 63),  7), ("2026-08-10", ( 6, 37, 54, 55, 64), 10),
+    ("2026-08-12", ( 4, 26, 66, 67, 69),  9), ("2026-08-15", ( 5,  8, 27, 29, 63), 13),
+    ("2026-08-17", ( 8, 15, 25, 49, 65), 22), ("2026-08-19", (10, 21, 58, 61, 64), 17),
+    ("2026-08-22", (13, 31, 54, 57, 65), 23), ("2026-08-24", ( 3, 16, 33, 38, 68),  2),
+    ("2026-08-26", (12, 32, 45, 50, 58),  2), ("2026-08-29", (18, 56, 62, 65, 67), 18),
+    ("2026-08-31", (11, 17, 25, 37, 49), 10), ("2026-09-02", ( 3, 10, 29, 58, 64), 14),
+    ("2026-09-05", (15, 40, 47, 53, 59),  9), ("2026-09-07", (15, 19, 28, 39, 56),  3),
+    ("2026-09-09", ( 9, 40, 42, 55, 65), 23), ("2026-09-12", (14, 16, 23, 58, 69),  3),
+    ("2026-09-14", (19, 20, 57, 61, 67), 22), ("2026-09-16", ( 2, 21, 24, 25, 64),  7),
+    ("2026-09-19", (18, 30, 41, 45, 68), 10), ("2026-09-21", ( 2,  7,  9, 17, 58), 20),
+    ("2026-09-23", ( 5, 15, 26, 29, 30), 14), ("2026-09-26", (14, 40, 52, 55, 57), 24),
+    ("2026-09-28", (17, 21, 29, 42, 49),  7), ("2026-09-30", ( 4,  6, 23, 33, 44), 13),
+    ("2026-10-03", ( 4, 42, 44, 55, 59), 14), ("2026-10-05", (16, 23, 32, 36, 54),  9),
+    ("2026-10-07", (11, 13, 14, 21, 65), 19), ("2026-10-10", ( 1,  4, 19, 33, 51), 15),
+    ("2026-10-12", (22, 28, 38, 51, 69),  9), ("2026-10-14", ( 3, 34, 37, 42, 46), 20),
+]
+_ANCHOR_DATES = ("2026-10-07", "2026-10-03")   # 11-13-14-21-65 and 04-42-44-55-59
+_ANCHOR_SHARE = 0.9                            # anchors' share of the training weight
+_CANDIDATES   = 20000
+_BANDWIDTH    = 0.35                           # in standard-deviation units
+
+
+def _shape(tickets):
+    """(n, 5) tickets -> (n, 4) shape: low count, lowest, highest, sum."""
+    t = np.sort(np.asarray(tickets), axis=1)
+    return np.column_stack([(t <= _LOW_MAX).sum(axis=1), t[:, 0], t[:, -1], t.sum(axis=1)])
+
+
+def profile(main) -> str:
+    low = sum(n <= _LOW_MAX for n in main)
+    return f"low/high {low}/{5 - low} · range {min(main)}-{max(main)} · sum {sum(main)}"
+
+
+def train_pattern_model():
+    """Fit the weighted shape density; returns (model, mean, std)."""
+    if np is None:
+        raise ImportError("numpy", name="numpy")
+    from sklearn.neighbors import KernelDensity
+
+    shapes  = _shape([main for _, main, _ in _RECENT_DRAWS]).astype(float)
+    anchor  = np.array([d in _ANCHOR_DATES for d, _, _ in _RECENT_DRAWS])
+    weights = np.where(anchor, _ANCHOR_SHARE / anchor.sum(), (1 - _ANCHOR_SHARE) / (~anchor).sum())
+    mean, std = shapes.mean(axis=0), shapes.std(axis=0)
+    kde = KernelDensity(bandwidth=_BANDWIDTH).fit((shapes - mean) / std, sample_weight=weights)
+    return kde, mean, std
+
+
+def generate_pattern_picks(count: int):
+    """Returns (anchor draws, top-confidence ticket, [count weighted tickets])."""
+    kde, mean, std = train_pattern_model()
+    rng = np.random.default_rng()
+
+    # Weighted sampling without replacement for every candidate at once
+    # (Gumbel top-k, with the Smart Pick hot scores as the weights).
+    keys = np.log([_PB_SCORES[n] for n in range(1, 70)]) + rng.gumbel(size=(_CANDIDATES, 69))
+    cand = np.unique(np.sort(np.argpartition(-keys, 5, axis=1)[:, :5] + 1, axis=1), axis=0)
+    past = {tuple(main) for _, main, _ in _RECENT_DRAWS}   # never re-issue a past draw
+    cand = cand[[tuple(c) not in past for c in cand.tolist()]]
+
+    logp  = kde.score_samples((_shape(cand) - mean) / std)
+    fit   = np.exp(logp - logp.max())
+    picks = rng.choice(len(cand), size=count, replace=False, p=fit / fit.sum())
+
+    red = np.full(26, 0.5)                       # floor so no red ball is excluded
+    for _, _, pb in _RECENT_DRAWS:
+        red[pb - 1] += 1
+    top     = (cand[logp.argmax()].tolist(), int(red.argmax()) + 1)
+    tickets = [(cand[i].tolist(), int(rng.choice(26, p=red / red.sum())) + 1) for i in picks]
+    anchors = [(d, list(m), pb) for d, m, pb in _RECENT_DRAWS if d in _ANCHOR_DATES]
+    return anchors, top, tickets
+
+
 # ── Display helpers ───────────────────────────────────────────────────────────
 
 def display_powerball(main, pb):
@@ -372,13 +464,45 @@ def run_ml_position(game: str):
     display_ml_position(game, ml, top, picks)
 
 
+def display_pattern_pick(anchors: list, top, picks: list):
+    """Show the anchor draws' shape, then tickets with their own shape."""
+    border = "=" * 70
+    print(f"\n{border}")
+    print("   PATTERN PICK  -  POWERBALL / DOUBLE PLAY  (low 1-34 · high 35-69)")
+    print(f"   Shape model: {len(_RECENT_DRAWS)} draws ({_RECENT_DRAWS[0][0]} to "
+          f"{_RECENT_DRAWS[-1][0]}), anchors weighted {_ANCHOR_SHARE:.0%}")
+    print(border)
+    print("\n  Anchor draws:")
+    for date, main, pb in anchors:
+        print(f"    {date}  {' - '.join(f'{n:02d}' for n in main)}   PB {pb:02d}"
+              f"    {profile(main)}")
+    print()
+    rows = [("Top Confidence", top)] + [(f"Weighted Pick {i}", t) for i, t in enumerate(picks, 1)]
+    for label, (main, pb) in rows:
+        print(f"  {label:<16}:  {' - '.join(f'{n:02d}' for n in main)}   |  Red: {pb:2d}"
+              f"    {profile(main)}")
+    print("\n  Note: draws are random; matching a past shape does not change the odds.")
+    print(border)
+
+
+def run_pattern_pick():
+    raw = input("  How many weighted tickets? [3]: ").strip()
+    count = int(raw) if raw.isdigit() and int(raw) > 0 else 3
+    try:
+        anchors, top, picks = generate_pattern_picks(count)
+    except ImportError as e:
+        print(f"\n  Missing dependency ({e.name}). Run: pip install numpy scikit-learn")
+        return
+    display_pattern_pick(anchors, top, picks)
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
     print("\n╔══════════════════════════════════════════════════╗")
     print("║          LOTTERY NUMBER GENERATOR                ║")
     print("╠══════════════════════════════════════════════════╣")
-    print("║  Random · Smart Picks · ML Position Picks       ║")
+    print("║  Random · Smart · ML Position · Pattern Picks   ║")
     print("╚══════════════════════════════════════════════════╝")
 
     while True:
@@ -392,9 +516,11 @@ def main():
         print("  6. ★ Both Smart Picks")
         print("\n  ── ML Position Pick (drawn order, not sorted) ─")
         print("  7. ★ Powerball / Double Play ML Position Pick")
-        print("\n  8. Exit")
+        print("\n  ── Pattern Pick (low/high scope of recent draws) ─")
+        print("  8. ★ Powerball / Double Play Pattern Pick")
+        print("\n  9. Exit")
 
-        choice = input("\n  Enter your choice (1-8): ").strip()
+        choice = input("\n  Enter your choice (1-9): ").strip()
 
         # ── Random picks ──────────────────────────────────────────────────────
         if choice == "1":
@@ -439,12 +565,15 @@ def main():
             run_ml_position("POWERBALL / DOUBLE PLAY")
 
         elif choice == "8":
+            run_pattern_pick()
+
+        elif choice == "9":
             print("\n  Thank you for using Lottery Number Generator!")
             print("  Good luck!\n")
             break
 
         else:
-            print("\n  Invalid choice. Please enter 1 through 8.")
+            print("\n  Invalid choice. Please enter 1 through 9.")
 
 
 if __name__ == "__main__":
