@@ -319,10 +319,14 @@ def parse_args():
     p = argparse.ArgumentParser(description="Generate ML-scored Powerball tickets for the next draw.")
     p.add_argument("-n", "--tickets", type=int, default=3,
                    help="number of weighted-random ML tickets to generate (default: 3)")
+    p.add_argument("-d", "--days", type=int, default=None,
+                   help="key the recency features to the draws in the last N calendar "
+                        "days instead of the default ~3 months (e.g. --days 60)")
     return p.parse_args()
 
 
 def main():
+    global WINDOW_3MO
     args = parse_args()
     n_tickets = max(1, args.tickets)
     random.seed()
@@ -330,7 +334,8 @@ def main():
     print("=" * 66)
     print("  MACHINE-LEARNING POWERBALL TICKET GENERATOR")
     print("  (per-sorted-position logistic regression, causal features,")
-    print("   recency keyed to the trailing ~3 calendar months, held-out AUC)")
+    span = f"last {args.days} calendar days" if args.days else "trailing ~3 calendar months"
+    print(f"   recency keyed to the {span}, held-out AUC)")
     print("=" * 66)
 
     print("\n  Loading draw history ... ", end="", flush=True)
@@ -338,6 +343,12 @@ def main():
     n_draws = len(df)
     dmax = df["draw_date"].max().date()
     print(f"done. {n_draws:,} draws through {dmax}")
+
+    if args.days:
+        cutoff = df["draw_date"].max() - pd.Timedelta(days=args.days)
+        WINDOW_3MO = max(1, int((df["draw_date"] > cutoff).sum()))
+        print(f"  Recency window: last {args.days} days = {WINDOW_3MO} draws "
+              f"({(cutoff + pd.Timedelta(days=1)).date()} .. {dmax})")
 
     if n_draws < WARMUP + HOLDOUT_N + 10:
         print("\n  Not enough draw history to train reliably. Exiting.")
